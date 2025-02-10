@@ -4,128 +4,146 @@ namespace App\Http\Controllers\API\Inventory;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
-
 use App\Http\Controllers\API\BaseController;
 use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class View_Inventory extends BaseController
 {
     public function ViewTransaction(Request $request)
     {
-        // Get transaction type from the request
-        $transactionType = $request->input('transactionType', 'all'); // Default to 'all' if not specified
-
-        // Time period filter
-        $timePeriod = $request->input('timePeriod', 'all');
-        $dateLimit = null;
-
-        switch ($timePeriod) {
-            case '30_days':
-                $dateLimit = now()->subDays(30);
-                break;
-            case '60_days':
-                $dateLimit = now()->subDays(60);
-                break;
-            case '90_days':
-                $dateLimit = now()->subDays(90);
-                break;
-            default:
-                $dateLimit = null;
-                break;
-        }
-
+        $transactionTypes = $request->input('transaction_types', ['all']);
+        $categories = $request->input('categories', []);
+        $dateFrom = $request->input('date_from');
+        $dateTo = $request->input('date_to');
+        $searchTerm = $request->input('search', ''); // Get the search term
         $transactions = collect();
-        $totalRestockedQuantity = 0; // Initialize restock quantity sum
+        $totalRestockedQuantity = 0;
 
-        // Fetch Restock Transactions if applicable
-        if ($transactionType === 'all' || $transactionType === 'Restock') {
+        // Fetch Restock Transactions
+        if (in_array('all', $transactionTypes) || in_array('Restock', $transactionTypes)) {
             $restocks = DB::table('product_restock_orders')
                 ->join('products', 'product_restock_orders.product_id', '=', 'products.id')
+                ->join('categories', 'products.category_id', '=', 'categories.id')
                 ->select(
-                    'product_restock_orders.product_id', // Include product_id in the response
+                    'product_restock_orders.product_id',
+                    'products.product_name',
+                    'categories.category_name',
                     DB::raw('NULL as delivery_id'),
                     'product_restock_orders.quantity',
                     DB::raw('FORMAT(product_restock_orders.quantity * products.original_price, 2) as total_value'),
-                    'product_restock_orders.created_at as date',
+                    'product_restock_orders.created_at as date_in',
                     DB::raw('"Restock" as transaction_type'),
                     DB::raw('NULL as delivery_status'),
                     DB::raw('NULL as total_damages')
                 );
 
-            if ($dateLimit) {
-                $restocks->where('product_restock_orders.created_at', '>=', $dateLimit);
+            if ($dateFrom) $restocks->whereDate('product_restock_orders.created_at', '>=', $dateFrom);
+            if ($dateTo) $restocks->whereDate('product_restock_orders.created_at', '<=', $dateTo);
+            if (!empty($categories)) $restocks->whereIn('categories.category_name', $categories);
+            if ($searchTerm) {
+                $restocks->where(function ($query) use ($searchTerm) {
+                    $query->where('products.product_name', 'like', "%{$searchTerm}%")
+                          ->orWhere('categories.category_name', 'like', "%{$searchTerm}%");
+                });
             }
 
-            // Calculate total restocked quantity
             $restockResults = $restocks->get();
             $totalRestockedQuantity = $restockResults->sum('quantity');
-
             $transactions = $transactions->merge($restockResults);
         }
 
-        // Fetch Delivery Transactions if applicable
-        if ($transactionType === 'all' || $transactionType === 'Delivery') {
+        // Fetch Delivery Transactions
+        if (in_array('all', $transactionTypes) || in_array('Delivery', $transactionTypes)) {
             $deliveries = DB::table('delivery_products as dp')
                 ->join('deliveries as d', 'dp.delivery_id', '=', 'd.id')
                 ->join('product_details as pd', 'd.purchase_order_id', '=', 'pd.purchase_order_id')
+                ->join('products', 'dp.product_id', '=', 'products.id')
+                ->join('categories', 'products.category_id', '=', 'categories.id')
                 ->select(
-                    'dp.product_id', // Include product_id in the response
+                    'dp.product_id',
+                    'products.product_name',
+                    'categories.category_name',
                     'dp.delivery_id',
                     'dp.quantity',
                     'dp.no_of_damages',
                     'pd.price',
-                    DB::raw('(dp.quantity * pd.price) AS total_value'),
-                    'd.created_at as date',
+                    DB::raw('FORMAT(dp.quantity * pd.price, 2) AS total_value'),
+                    'd.created_at as date_in',
+                    'd.delivered_at as date_out',
                     DB::raw('"Delivery" as transaction_type'),
                     'd.status as delivery_status'
                 )
                 ->where('d.status', 'S')
                 ->distinct();
 
-            if ($dateLimit) {
-                $deliveries->where('d.created_at', '>=', $dateLimit);
+            if ($dateFrom) $deliveries->whereDate('d.created_at', '>=', $dateFrom);
+            if ($dateTo) $deliveries->whereDate('d.created_at', '<=', $dateTo);
+            if (!empty($categories)) $deliveries->whereIn('categories.category_name', $categories);
+            if ($searchTerm) {
+                $deliveries->where(function ($query) use ($searchTerm) {
+                    $query->where('products.product_name', 'like', "%{$searchTerm}%")
+                          ->orWhere('categories.category_name', 'like', "%{$searchTerm}%");
+                });
             }
 
             $transactions = $transactions->merge($deliveries->get());
         }
 
-        // Fetch Walk-In Transactions if applicable
-        if ($transactionType === 'all' || $transactionType === 'Walk-In') {
+        // Fetch Walk-In Transactions
+        if (in_array('all', $transactionTypes) || in_array('Walk-In', $transactionTypes)) {
             $walkIns = DB::table('purchase_orders as po')
                 ->join('product_details as pd', 'po.id', '=', 'pd.purchase_order_id')
+                ->join('products', 'pd.product_id', '=', 'products.id')
+                ->join('categories', 'products.category_id', '=', 'categories.id')
                 ->select(
-                    'pd.product_id', // Include product_id in the response
+                    'pd.product_id',
+                    'products.product_name',
+                    'categories.category_name',
                     DB::raw('NULL as delivery_id'),
                     'pd.quantity',
                     'pd.price',
-                    DB::raw('(pd.quantity * pd.price) AS total_value'),
-                    'po.created_at as date',
+                    DB::raw('FORMAT(pd.quantity * pd.price, 2) AS total_value'),
+                    'po.created_at as date_in',
                     DB::raw('"Walk-In" as transaction_type'),
                     DB::raw('NULL as delivery_status'),
                     DB::raw('NULL as total_damages')
                 )
-                ->where('po.sale_type_id', '=', 2); // Assuming '2' corresponds to 'Walk-In'
+                ->where('po.sale_type_id', '=', 2);
 
-            if ($dateLimit) {
-                $walkIns->where('po.created_at', '>=', $dateLimit);
+            if ($dateFrom) $walkIns->whereDate('po.created_at', '>=', $dateFrom);
+            if ($dateTo) $walkIns->whereDate('po.created_at', '<=', $dateTo);
+            if (!empty($categories)) $walkIns->whereIn('categories.category_name', $categories);
+            if ($searchTerm) {
+                $walkIns->where(function ($query) use ($searchTerm) {
+                    $query->where('products.product_name', 'like', "%{$searchTerm}%")
+                          ->orWhere('categories.category_name', 'like', "%{$searchTerm}%");
+                });
             }
 
             $transactions = $transactions->merge($walkIns->get());
         }
 
         // Sort transactions by date
-        $sortedTransactions = $transactions->sortByDesc('date')->values();
+        $sortedTransactions = $transactions->sortByDesc('date_in')->values();
 
-        // Pagination Setup
-        $perPage = $request->input('perPage', 10);
+        // Format the date values before sending response
+        $formattedTransactions = $sortedTransactions->map(function ($transaction) {
+            $transaction->date_in = $transaction->date_in ? Carbon::parse($transaction->date_in)->format('n/j/Y (g:i a)') : null;
+            $transaction->date_out = isset($transaction->date_out) ? Carbon::parse($transaction->date_out)->format('n/j/Y (g:i a)') : null;
+            return $transaction;
+        });
+
+        // Pagination
+        $perPage = $request->input('perPage', 20);
         $currentPage = $request->input('page', 1);
         $offset = ($currentPage - 1) * $perPage;
 
-        $paginatedTransactions = $sortedTransactions->slice($offset, $perPage)->values();
+        $paginatedTransactions = $formattedTransactions->slice($offset, $perPage)->values();
 
         // Return response
         return response()->json([
-            'total_restocked_quantity' => $totalRestockedQuantity, // Added total restock quantity here
+            'total_restocked_quantity' => $totalRestockedQuantity,
             'transactions' => [
                 'data' => $paginatedTransactions,
                 'pagination' => [
