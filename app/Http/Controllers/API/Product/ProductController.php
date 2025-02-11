@@ -35,7 +35,7 @@ class ProductController extends BaseController
                     },
                 ],
                 'quantity' => 'required|integer|min:1', // Validate initial stock quantity
-                'user_id' => 'required|exists:users,id', // Ensure valid user for restocking
+                'user_id' => 'required|exists:users,id', // Validate user_id
             ]);
 
             if ($validator->fails()) {
@@ -49,7 +49,7 @@ class ProductController extends BaseController
             ProductRestockOrder::create([
                 'product_id' => $product->id,
                 'quantity' => $request->quantity,
-                'user_id' => $request->user_id, // Log which user created the restock
+                'user_id' => $request->user_id, // Include user_id in the restock entry
             ]);
 
             DB::commit();
