@@ -23,20 +23,22 @@ class View_Inventory extends BaseController
         // Fetch Restock Transactions
         if (in_array('all', $transactionTypes) || in_array('Restock', $transactionTypes)) {
             $restocks = DB::table('product_restock_orders')
-                ->join('products', 'product_restock_orders.product_id', '=', 'products.id')
-                ->join('categories', 'products.category_id', '=', 'categories.id')
-                ->select(
-                    'product_restock_orders.product_id',
-                    'products.product_name',
-                    'categories.category_name',
-                    DB::raw('NULL as delivery_id'),
-                    'product_restock_orders.quantity',
-                    DB::raw('FORMAT(product_restock_orders.quantity * products.original_price, 2) as total_value'),
-                    'product_restock_orders.created_at as date_in',
-                    DB::raw('"Restock" as transaction_type'),
-                    DB::raw('NULL as delivery_status'),
-                    DB::raw('NULL as total_damages')
-                );
+            ->join('products', 'product_restock_orders.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id')
+            ->select(
+                'product_restock_orders.product_id',
+                'products.product_name',
+                'categories.category_name',
+                DB::raw('NULL as delivery_id'),
+                'product_restock_orders.quantity',
+                DB::raw('FORMAT(product_restock_orders.quantity * products.original_price, 2) as total_value'),
+                'product_restock_orders.created_at as date_in',
+                'product_restock_orders.created_at as date_out', // ✅ Ensure date_in and date_out are the same
+                DB::raw('"Restock" as transaction_type'),
+                DB::raw('NULL as delivery_status'),
+                DB::raw('NULL as total_damages')
+            );
+
 
             if ($dateFrom) $restocks->whereDate('product_restock_orders.created_at', '>=', $dateFrom);
             if ($dateTo) $restocks->whereDate('product_restock_orders.created_at', '<=', $dateTo);
@@ -60,6 +62,8 @@ class View_Inventory extends BaseController
                 ->join('product_details as pd', 'd.purchase_order_id', '=', 'pd.purchase_order_id')
                 ->join('products', 'dp.product_id', '=', 'products.id')
                 ->join('categories', 'products.category_id', '=', 'categories.id')
+                ->leftJoin(DB::raw('(SELECT product_id, MAX(created_at) as latest_restock_date FROM product_restock_orders GROUP BY product_id) as pro'),
+                    'products.id', '=', 'pro.product_id')
                 ->select(
                     'dp.product_id',
                     'products.product_name',
@@ -69,7 +73,7 @@ class View_Inventory extends BaseController
                     'dp.no_of_damages',
                     'pd.price',
                     DB::raw('FORMAT(dp.quantity * pd.price, 2) AS total_value'),
-                    'd.created_at as date_in',
+                    'pro.latest_restock_date as date_in',
                     'd.delivered_at as date_out',
                     DB::raw('"Delivery" as transaction_type'),
                     'd.status as delivery_status'
@@ -93,39 +97,49 @@ class View_Inventory extends BaseController
         // Fetch Walk-In Transactions
         if (in_array('all', $transactionTypes) || in_array('Walk-In', $transactionTypes)) {
             $walkIns = DB::table('purchase_orders as po')
-                ->join('product_details as pd', 'po.id', '=', 'pd.purchase_order_id')
-                ->join('products', 'pd.product_id', '=', 'products.id')
-                ->join('categories', 'products.category_id', '=', 'categories.id')
-                ->select(
-                    'pd.product_id',
-                    'products.product_name',
-                    'categories.category_name',
-                    DB::raw('NULL as delivery_id'),
-                    'pd.quantity',
-                    'pd.price',
-                    DB::raw('FORMAT(pd.quantity * pd.price, 2) AS total_value'),
-                    'po.created_at as date_in',
-                    DB::raw('"Walk-In" as transaction_type'),
-                    DB::raw('NULL as delivery_status'),
-                    DB::raw('NULL as total_damages')
-                )
-                ->where('po.sale_type_id', '=', 2);
+            ->join('product_details as pd', 'po.id', '=', 'pd.purchase_order_id')
+            ->join('products', 'pd.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id') // ✅ Join categories
+            ->select(
+                'po.id',
+                'po.customer_name',
+                'po.sale_type_id',
+                'products.product_name',
+                'pd.product_id',
+                'pd.quantity', // ✅ Use exact quantity
+                'categories.category_name', // ✅ Added category name
 
-            if ($dateFrom) $walkIns->whereDate('po.created_at', '>=', $dateFrom);
-            if ($dateTo) $walkIns->whereDate('po.created_at', '<=', $dateTo);
-            if (!empty($categories)) $walkIns->whereIn('categories.category_name', $categories);
-            if ($searchTerm) {
-                $walkIns->where(function ($query) use ($searchTerm) {
-                    $query->where('products.product_name', 'like', "%{$searchTerm}%")
-                          ->orWhere('categories.category_name', 'like', "%{$searchTerm}%");
-                });
-            }
+                // ✅ Correct `date_in` - Last restock before the sale
+                DB::raw('(SELECT MAX(pro2.created_at)
+                    FROM product_restock_orders pro2
+                    WHERE pro2.product_id = pd.product_id
+                    AND pro2.created_at <= po.created_at
+                ) AS date_in'),
 
-            $transactions = $transactions->merge($walkIns->get());
+                // ✅ `date_out` - Sale date
+                'po.created_at as date_out',
+
+                // ✅ Total Value (quantity * product price)
+                DB::raw('FORMAT(pd.quantity * products.original_price, 2) AS total_value'),
+
+                // ✅ Transaction Type for Walk-Ins
+                DB::raw('"Walk-In" as transaction_type')
+            )
+            ->where('po.sale_type_id', '=', 2) // ✅ Only for Walk-In sales
+            ->groupBy(
+                'po.id', 'po.customer_name', 'po.sale_type_id',
+                'products.product_name', 'po.created_at', 'pd.product_id',
+                'pd.quantity', 'categories.category_name', 'products.original_price'
+            ) // ✅ Ensures proper grouping
+            ->get();
+
+
+
+            $transactions = $transactions->merge($walkIns);
         }
 
-        // Sort transactions by date
-        $sortedTransactions = $transactions->sortByDesc('date_in')->values();
+        // Ensure transactions are sorted by latest date first
+        $sortedTransactions = $transactions->sortByDesc('date_out')->values();
 
         // Format the date values before sending response
         $formattedTransactions = $sortedTransactions->map(function ($transaction) {
@@ -154,5 +168,6 @@ class View_Inventory extends BaseController
                 ],
             ],
         ]);
+
     }
 }
