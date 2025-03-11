@@ -62,8 +62,13 @@ class View_Inventory extends BaseController
                 ->join('product_details as pd', 'd.purchase_order_id', '=', 'pd.purchase_order_id')
                 ->join('products', 'dp.product_id', '=', 'products.id')
                 ->join('categories', 'products.category_id', '=', 'categories.id')
-                ->leftJoin(DB::raw('(SELECT product_id, MAX(created_at) as latest_restock_date FROM product_restock_orders GROUP BY product_id) as pro'),
+
+                // ✅ LEFT JOIN for finding the correct `date_in`
+                ->leftJoin(DB::raw('(SELECT product_id, MAX(created_at) as latest_restock_date
+                                    FROM product_restock_orders
+                                    GROUP BY product_id) as pro'),
                     'products.id', '=', 'pro.product_id')
+
                 ->select(
                     'dp.product_id',
                     'products.product_name',
@@ -73,12 +78,22 @@ class View_Inventory extends BaseController
                     'dp.no_of_damages',
                     'pd.price',
                     DB::raw('FORMAT(dp.quantity * pd.price, 2) AS total_value'),
-                    'pro.latest_restock_date as date_in',
-                    'd.delivered_at as date_out',
+
+                    // ✅ Correct `date_in` (last restock before delivery)
+                    DB::raw('(SELECT MAX(pro2.created_at)
+                              FROM product_restock_orders pro2
+                              WHERE pro2.product_id = dp.product_id
+                              AND pro2.created_at <= d.created_at
+                             ) AS date_in'),
+
+                    // ✅ Correct `date_out` (delivery creation date)
+                    'd.created_at as date_out',
+
+                    // ✅ Transaction Type for Deliveries
                     DB::raw('"Delivery" as transaction_type'),
                     'd.status as delivery_status'
                 )
-                ->where('d.status', 'S')
+                ->where('d.status', 'S') // ✅ Only successful deliveries
                 ->distinct();
 
             if ($dateFrom) $deliveries->whereDate('d.created_at', '>=', $dateFrom);
@@ -91,8 +106,10 @@ class View_Inventory extends BaseController
                 });
             }
 
+            // ✅ Merge updated deliveries into transactions list
             $transactions = $transactions->merge($deliveries->get());
         }
+
 
         // Fetch Walk-In Transactions
         if (in_array('all', $transactionTypes) || in_array('Walk-In', $transactionTypes)) {
