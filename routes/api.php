@@ -179,6 +179,8 @@ use App\Http\Controllers\API\Inventory\View_Inventory;
     Route::get('view/reorder-level', [ProductRestockController::class, 'reorderLevel']);
 
     Route::get('view/inventory/transactions/', [View_Inventory::class, 'ViewTransaction']);
+    Route::get('/inventory/transactions/{product_id}', [View_Inventory::class, 'ViewTransactionByProductId']);
+
 
 // Start Product ReStocks
     Route::post('products-restock', [ProductRestockController::class, 'create']);
