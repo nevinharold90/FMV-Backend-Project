@@ -66,7 +66,7 @@ use App\Http\Controllers\API\Inventory\View_Inventory;
 // Start User
     Route::get('users', [UserController::class, 'index']);
     Route::get('users/employee', [UserController::class, 'index_employee']);
-    Route::post('users', [UserController::class, 'create']);
+    Route::post('users/employee', [UserController::class, 'create']);
     Route::get('users/{id}', [UserController::class, 'user_by_id']);
     Route::put('user/{id}/update', [UserController::class, 'update']);
     Route::delete('users/{id}/delete', [UserController::class, 'destroy']);

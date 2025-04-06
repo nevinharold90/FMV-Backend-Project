@@ -25,11 +25,6 @@
 - Open your browser in alternative ```http://ipv4:3000```.
 - if the error is something about `personal access client`, install this: ```php artisan passport:client --personal```
 
-
-## Contributing Feel free to fork this repository and submit pull requests. 
-
-All contributions are welcome! ## License This project is licensed under the MIT License - see the LICENSE file for details. 
-
 ## Acknowledgments - Laravel framework: https://laravel.com - All contributors and community members.
 
 ### THIS IS THE ALTERNATIVE IF IT DOESN'T WORK AT FIRST
